@@ -266,7 +266,7 @@ function cryptoDisable($socket) {
 }
 
 function __watchCrypto($method, $socket) {
-    $result = \stream_socket_enable_crypto($socket, $enable = true, $method);
+    $result = \@stream_socket_enable_crypto($socket, $enable = true, $method);
     if ($result === true) {
         return new Success($socket);
     } elseif ($result === false) {
@@ -283,7 +283,7 @@ function __watchCrypto($method, $socket) {
 
 function __onCryptoWatchReadability($watcherId, $socket, $cbData) {
     list($promisor, $method) = $cbData;
-    $result = \stream_socket_enable_crypto($socket, $enable = true, $method);
+    $result = \@stream_socket_enable_crypto($socket, $enable = true, $method);
     if ($result === true) {
         \Amp\cancel($watcherId);
         $promisor->succeed($socket);
