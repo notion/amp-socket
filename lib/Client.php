@@ -31,6 +31,7 @@ class Client {
                 $state->bytesSent += $bytes;
                 Client::onWrite($state, $op, $bytes);
             } else {
+\Notion\Log\Log::info('EMPTY WRITE ON: ' . $op->buffer);
                 Client::onEmptyWrite($state);
             }
         }, $options = ["enable" => false]);
@@ -307,7 +308,14 @@ class Client {
     }
 
     private static function onEmptyWrite($state) {
+
+	if (\is_resource($state->socket) && !@\feof($state->socket))
+	{
+		\Notion\Log\Log::info('REMAINING SOCKET DATA: ' . @fread($state->socket, 1024));
+	}
+
         if (!\is_resource($state->socket) || @\feof($state->socket)) {
+\Notion\Log\Log::info('MARKED SOCKET AS DEAD');
             $state->isDead = true;
             amp\cancel($state->writeWatcherId);
             foreach ($state->writeOperations as $op) {
