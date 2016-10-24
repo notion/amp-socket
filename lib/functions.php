@@ -42,6 +42,8 @@ function connect($uri, array $options = []) {
 }
 
 function __doConnect($uri, array $options) {
+    $contextOptions = [];
+
     if (\stripos($uri, "unix://") === 0 || \stripos($uri, "udg://") === 0) {
         list($scheme, $path) = explode("://", $uri, 2);
         $isUnixSock = true;
@@ -70,6 +72,17 @@ function __doConnect($uri, array $options) {
             );
         }
 
+        if (PHP_VERSION_ID < 50600 && $scheme === "tcp") {
+            // Prior to PHP 5.6 the SNI_server_name only registers if assigned to the stream
+            // context at the time the socket is first connected (NOT with stream_socket_enable_crypto()).
+            // So we always add the necessary ctx option here along with our own custom SNI_nb_hack
+            // key to communicate our intent to the CryptoBroker if it's subsequently used
+            $contextOptions = ["ssl" => [
+                "SNI_server_name" => $host,
+                "SNI_nb_hack" => true,
+            ]];
+        }
+
         if ($inAddr = @\inet_pton($host)) {
             $isIpv6 = isset($inAddr[15]);
         } else {
@@ -83,18 +96,6 @@ function __doConnect($uri, array $options) {
 
     $flags = \STREAM_CLIENT_CONNECT | \STREAM_CLIENT_ASYNC_CONNECT;
     $timeout = 42; // <--- timeout not applicable for async connects
-    if (PHP_VERSION_ID < 50600 && $scheme === "tcp") {
-        // Prior to PHP 5.6 the SNI_server_name only registers if assigned to the stream
-        // context at the time the socket is first connected (NOT with stream_socket_enable_crypto()).
-        // So we always add the necessary ctx option here along with our own custom SNI_nb_hack
-        // key to communicate our intent to the CryptoBroker if it's subsequently used
-        $contextOptions = ["ssl" => [
-            "SNI_server_name" => $host,
-            "SNI_nb_hack" => true,
-        ]];
-    } else {
-        $contextOptions = [];
-    }
 
     $bindTo = empty($options["bind_to"]) ? "" : (string) $options["bind_to"];
     if (!$isUnixSock && $bindTo) {
@@ -161,60 +162,89 @@ function __doCryptoConnect($uri, $options) {
  * @return \Amp\Promise
  */
 function cryptoEnable($socket, array $options = []) {
+    static $caBundleFiles = [];
+
     $isLegacy = (PHP_VERSION_ID < 50600);
+
     if ($isLegacy) {
         // For pre-5.6 we always manually verify names in userland
         // using the captured peer certificate.
         $options["capture_peer_cert"] = true;
         $options["verify_peer"] = isset($options["verify_peer"]) ? $options["verify_peer"] : true;
+
         if (isset($options["CN_match"])) {
             $peerName = $options["CN_match"];
             $options["peer_name"] = $peerName;
             unset($options["CN_match"]);
         }
+
         if (empty($options["cafile"])) {
             $options["cafile"] = __DIR__ . "/../var/ca-bundle.crt";
         }
     }
 
+    // Externalize any bundle inside a Phar, because OpenSSL doesn't support the stream wrapper.
+    if (!empty($options["cafile"]) && strpos($options["cafile"], "phar://") === 0) {
+        // Yes, this is blocking but way better than just an error.
+        if (!isset($caBundleFiles[$options["cafile"]])) {
+            $bundleContent = file_get_contents($options["cafile"]);
+            $caBundleFile = tempnam(sys_get_temp_dir(), "openssl-ca-bundle-");
+            file_put_contents($caBundleFile, $bundleContent);
+
+            register_shutdown_function(function() use ($caBundleFile) {
+                @unlink($caBundleFile);
+            });
+
+            $caBundleFiles[$options["cafile"]] = $caBundleFile;
+        }
+
+        $options["cafile"] = $caBundleFiles[$options["cafile"]];
+    }
+
     if (empty($options["ciphers"])) {
+        // See https://wiki.mozilla.org/Security/Server_Side_TLS#Intermediate_compatibility_.28default.29
+        // DES ciphers have been explicitly removed from that list
+
+        // TODO: We're using the recommended settings for servers here, we need a good resource for clients.
+        // Then we might be able to use a more restrictive list.
+
+        // The following cipher suites have been explicitly disabled, taken from previous configuration:
+        // !aNULL:!eNULL:!EXPORT:!DES:!DSS:!3DES:!MD5:!PSK
         $options["ciphers"] = \implode(':', [
-            "ECDHE-RSA-AES128-GCM-SHA256",
+            "ECDHE-ECDSA-CHACHA20-POLY1305",
+            "ECDHE-RSA-CHACHA20-POLY1305",
             "ECDHE-ECDSA-AES128-GCM-SHA256",
-            "ECDHE-RSA-AES256-GCM-SHA384",
+            "ECDHE-RSA-AES128-GCM-SHA256",
             "ECDHE-ECDSA-AES256-GCM-SHA384",
+            "ECDHE-RSA-AES256-GCM-SHA384",
             "DHE-RSA-AES128-GCM-SHA256",
-            "DHE-DSS-AES128-GCM-SHA256",
-            "kEDH+AESGCM",
-            "ECDHE-RSA-AES128-SHA256",
+            "DHE-RSA-AES256-GCM-SHA384",
             "ECDHE-ECDSA-AES128-SHA256",
-            "ECDHE-RSA-AES128-SHA",
+            "ECDHE-RSA-AES128-SHA256",
             "ECDHE-ECDSA-AES128-SHA",
             "ECDHE-RSA-AES256-SHA384",
+            "ECDHE-RSA-AES128-SHA",
             "ECDHE-ECDSA-AES256-SHA384",
-            "ECDHE-RSA-AES256-SHA",
             "ECDHE-ECDSA-AES256-SHA",
+            "ECDHE-RSA-AES256-SHA",
             "DHE-RSA-AES128-SHA256",
             "DHE-RSA-AES128-SHA",
-            "DHE-DSS-AES128-SHA256",
             "DHE-RSA-AES256-SHA256",
-            "DHE-DSS-AES256-SHA",
             "DHE-RSA-AES256-SHA",
             "AES128-GCM-SHA256",
             "AES256-GCM-SHA384",
-            "ECDHE-RSA-RC4-SHA",
-            "ECDHE-ECDSA-RC4-SHA",
-            "AES128",
-            "AES256",
-            "RC4-SHA",
-            "HIGH",
+            "AES128-SHA256",
+            "AES256-SHA256",
+            "AES128-SHA",
+            "AES256-SHA",
             "!aNULL",
             "!eNULL",
             "!EXPORT",
             "!DES",
+            "!DSS",
             "!3DES",
             "!MD5",
-            "!PSK"
+            "!PSK",
         ]);
     }
 
@@ -237,9 +267,11 @@ function cryptoEnable($socket, array $options = []) {
     if (isset($options["crypto_method"])) {
         $method = $options["crypto_method"];
         unset($options["crypto_method"]);
-    } elseif (PHP_VERSION_ID >= 50600 && PHP_VERSION_ID < 50606) {
+    } elseif (PHP_VERSION_ID >= 50600 && PHP_VERSION_ID <= 50606) {
+        /** @link https://bugs.php.net/69195 */
         $method = \STREAM_CRYPTO_METHOD_TLS_CLIENT;
     } else {
+        // note that this constant actually means "Any TLS version EXCEPT SSL v2 and v3"
         $method = \STREAM_CRYPTO_METHOD_SSLv23_CLIENT;
     }
 
