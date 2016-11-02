@@ -312,6 +312,14 @@ class Client {
     }
 
     private static function onEmptyRead($state) {
+
+    if (\is_resource($state->socket) || !@\feof($state->socket))
+    {
+        \Notion\Log\Log::info('GOT EMPTY READ');
+        \Notion\Log\Log::info('IS RESOURCE? ' . var_export(is_resource($state->socket), true));
+        \Notion\Log\Log::info('IS EOF? ' . var_export(feof($state->socket), true));
+    }
+
         if (!\is_resource($state->socket) || @\feof($state->socket)) {
             $state->isDead = true;
             amp\cancel($state->readWatcherId);
@@ -345,11 +353,11 @@ class Client {
 
 	if (\is_resource($state->socket) && !@\feof($state->socket))
 	{
+        \Notion\Log\Log::info('GOT EMPTY WRITE');
 		\Notion\Log\Log::info('REMAINING SOCKET DATA: ' . @fread($state->socket, 1024));
 	}
 
         if (!\is_resource($state->socket) || @\feof($state->socket)) {
-\Notion\Log\Log::info('MARKED SOCKET AS DEAD');
             $state->isDead = true;
             amp\cancel($state->writeWatcherId);
             foreach ($state->writeOperations as $op) {
