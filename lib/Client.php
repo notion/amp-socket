@@ -241,15 +241,13 @@ class Client {
         if (\is_resource($state->socket)) {
             @\fclose($state->socket);
         }
-        $isDead = $state->isDead;
-        $state->isDead = STREAM_SHUT_RDWR;
-        if (!($isDead & STREAM_SHUT_RD)) {
+        if (!($state->isDead & STREAM_SHUT_RD)) {
             amp\cancel($state->readWatcherId);
             foreach ($state->readOperations as $op) {
                 $op->promisor->succeed(null);
             }
         }
-        if (!($isDead & STREAM_SHUT_WR)) {
+        if (!($state->isDead & STREAM_SHUT_WR)) {
             amp\cancel($state->writeWatcherId);
             foreach ($state->writeOperations as $op) {
                 $op->promisor->succeed($op->bytesWritten);
@@ -319,11 +317,10 @@ class Client {
             // sink the buffer
             Client::onRead($state);
             // discard all readOperations that were left after buffer is empty
-            $ops = $state->readOperations;
-            $state->readOperations = [];
-            foreach ($ops as $op) {
+            foreach ($state->readOperations as $op) {
                 $op->promisor->succeed();
             }
+            $state->readOperations = [];
         }
     }
 
@@ -353,11 +350,10 @@ class Client {
         if (!\is_resource($state->socket) || @\feof($state->socket)) {
             $state->isDead |= STREAM_SHUT_WR;
             amp\cancel($state->writeWatcherId);
-            $ops = $state->writeOperations;
-            $state->writeOperations = [];
-            foreach ($ops as $op) {
+            foreach ($state->writeOperations as $op) {
                 $op->promisor->succeed($op->bytesWritten);
             }
+            $state->writeOperations = [];
         }
     }
 
