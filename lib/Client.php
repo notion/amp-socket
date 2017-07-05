@@ -311,10 +311,6 @@ class Client {
     }
 
     private static function onEmptyRead($state) {
-	if (\is_resource($state->socket) && !@\feof($state->socket)) {
-		\Notion\Log\Log::info('GOT EMPTY WRITE');
-		\Notion\Log\Log::info('REMAINING SOCKET DATA: ' . @fread($state->socket, 1024));
-	}
 
         if (!\is_resource($state->socket) || @\feof($state->socket)) {
             $state->isDead = true;
@@ -346,6 +342,11 @@ class Client {
     }
 
     private static function onEmptyWrite($state) {
+	if (\is_resource($state->socket) && !@\feof($state->socket)) {
+		\Notion\App\Log::info('GOT EMPTY WRITE');
+		\Notion\App\Log::info('REMAINING SOCKET DATA: ' . @fread($state->socket, 1024));
+	}
+
 	if (!\is_resource($state->socket) || @\feof($state->socket)) {
             $state->isDead = true;
             amp\cancel($state->writeWatcherId);
